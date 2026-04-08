@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_image.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
@@ -235,10 +236,10 @@ static void resize_surfaces(
     *window_surface = SDL_GetWindowSurface(window);
 }
 
-static bool load_bmp_into_canvas(SDL_Surface *canvas, const char *path) {
-    SDL_Surface *loaded = SDL_LoadBMP(path);
+static bool load_image_into_canvas(SDL_Surface *canvas, const char *path) {
+    SDL_Surface *loaded = IMG_Load(path);
     if (!loaded) {
-        printf("Open failed (%s): %s\n", path, SDL_GetError());
+        printf("Open failed (%s): %s\n", path, IMG_GetError());
         return false;
     }
 
@@ -341,6 +342,12 @@ int main(int argc, char *argv[]){
     bool done = false;
     SDL_Init(SDL_INIT_VIDEO);
 
+    int img_flags = IMG_INIT_JPG | IMG_INIT_PNG | IMG_INIT_TIF | IMG_INIT_WEBP;
+    int img_initted = IMG_Init(img_flags);
+    if ((img_initted & img_flags) == 0) {
+        printf("IMG_Init warning: %s\n", IMG_GetError());
+    }
+
     SDL_Window* window = SDL_CreateWindow(
        "paint@home",
        SDL_WINDOWPOS_CENTERED_DISPLAY(0),
@@ -375,7 +382,7 @@ int main(int argc, char *argv[]){
     snprintf(current_file_path, sizeof(current_file_path), "%s", DEFAULT_BMP_PATH);
 
     if (argc > 1) {
-        if (load_bmp_into_canvas(canvas, argv[1])) {
+        if (load_image_into_canvas(canvas, argv[1])) {
             snprintf(current_file_path, sizeof(current_file_path), "%s", argv[1]);
         }
     }
@@ -488,7 +495,7 @@ int main(int argc, char *argv[]){
                 }
 
                 push_undo(undo_stack, &undo_top, (int)MAX_UNDO, canvas);
-                if (!load_bmp_into_canvas(canvas, open_path)) {
+                if (!load_image_into_canvas(canvas, open_path)) {
                     pop_undo(undo_stack, &undo_top, canvas);
                 } else {
                     snprintf(current_file_path, sizeof(current_file_path), "%s", open_path);
@@ -536,6 +543,7 @@ int main(int argc, char *argv[]){
     SDL_FreeSurface(canvas);
     SDL_FreeSurface(cursor_preview);
     SDL_DestroyWindow(window);
+    IMG_Quit();
     SDL_Quit();
     return 0;
 }

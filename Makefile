@@ -1,6 +1,6 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c11 $(shell sdl2-config --cflags)
-LDLIBS = $(shell sdl2-config --libs)
+CFLAGS = -Wall -Wextra -std=c11 $(shell pkg-config --cflags sdl2 SDL2_image)
+LDLIBS = $(shell pkg-config --libs sdl2 SDL2_image)
 
 TARGET = bin/paint
 SRC = src/paint.c
