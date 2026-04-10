@@ -1,2 +1,12 @@
 bin/
 save/
+AppDir/
+.appimage-build/
+
+# AppImage packaging artifacts
+*.AppImage
+*.AppImage.sha256
+
+# Local packaging inputs generated during manual packaging
+pah.png
+PAH.desktop

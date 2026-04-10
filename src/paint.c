@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <errno.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -15,14 +16,145 @@ static const int HEIGHT = 800;
 static const int TARGET_FPS = 60;
 
 static const int PALETTE_X = 4;
-static const int PALETTE_Y = 4;
+static const int PALETTE_Y = 36;
 static const int PALETTE_BOX_W = 24;
 static const int PALETTE_BOX_H = 24;
 static const int PALETTE_GAP = 4;
 static const int PALETTE_COLUMNS = 14;
+static const int FILE_MENU_X = 4;
+static const int FILE_MENU_Y = 4;
+static const int FILE_MENU_BUTTON_W = 56;
+static const int FILE_MENU_BUTTON_H = 22;
+static const int FILE_MENU_DROPDOWN_W = 136;
+static const int FILE_MENU_ITEM_H = 20;
 static const char *SAVE_DIR = "save";
 static const char *DEFAULT_BMP_PATH = "save/drawing.bmp";
 static const size_t MAX_PATH_LEN = 512;
+
+typedef enum MenuAction {
+    MENU_ACTION_NONE,
+    MENU_ACTION_SAVE,
+    MENU_ACTION_SAVE_AS,
+    MENU_ACTION_OPEN,
+    MENU_ACTION_REOPEN
+} MenuAction;
+
+static bool point_in_rect(int x, int y, SDL_Rect rect) {
+    return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
+}
+
+static bool glyph_for_char(char c, unsigned char out_rows[7]) {
+    memset(out_rows, 0, 7);
+    switch (c) {
+        case 'A': out_rows[0]=0x04; out_rows[1]=0x0A; out_rows[2]=0x11; out_rows[3]=0x1F; out_rows[4]=0x11; out_rows[5]=0x11; out_rows[6]=0x11; return true;
+        case 'E': out_rows[0]=0x1F; out_rows[1]=0x10; out_rows[2]=0x10; out_rows[3]=0x1E; out_rows[4]=0x10; out_rows[5]=0x10; out_rows[6]=0x1F; return true;
+        case 'F': out_rows[0]=0x1F; out_rows[1]=0x10; out_rows[2]=0x10; out_rows[3]=0x1E; out_rows[4]=0x10; out_rows[5]=0x10; out_rows[6]=0x10; return true;
+        case 'I': out_rows[0]=0x1F; out_rows[1]=0x04; out_rows[2]=0x04; out_rows[3]=0x04; out_rows[4]=0x04; out_rows[5]=0x04; out_rows[6]=0x1F; return true;
+        case 'L': out_rows[0]=0x10; out_rows[1]=0x10; out_rows[2]=0x10; out_rows[3]=0x10; out_rows[4]=0x10; out_rows[5]=0x10; out_rows[6]=0x1F; return true;
+        case 'N': out_rows[0]=0x11; out_rows[1]=0x19; out_rows[2]=0x15; out_rows[3]=0x13; out_rows[4]=0x11; out_rows[5]=0x11; out_rows[6]=0x11; return true;
+        case 'O': out_rows[0]=0x0E; out_rows[1]=0x11; out_rows[2]=0x11; out_rows[3]=0x11; out_rows[4]=0x11; out_rows[5]=0x11; out_rows[6]=0x0E; return true;
+        case 'P': out_rows[0]=0x1E; out_rows[1]=0x11; out_rows[2]=0x11; out_rows[3]=0x1E; out_rows[4]=0x10; out_rows[5]=0x10; out_rows[6]=0x10; return true;
+        case 'R': out_rows[0]=0x1E; out_rows[1]=0x11; out_rows[2]=0x11; out_rows[3]=0x1E; out_rows[4]=0x14; out_rows[5]=0x12; out_rows[6]=0x11; return true;
+        case 'S': out_rows[0]=0x0F; out_rows[1]=0x10; out_rows[2]=0x10; out_rows[3]=0x0E; out_rows[4]=0x01; out_rows[5]=0x01; out_rows[6]=0x1E; return true;
+        case 'V': out_rows[0]=0x11; out_rows[1]=0x11; out_rows[2]=0x11; out_rows[3]=0x11; out_rows[4]=0x11; out_rows[5]=0x0A; out_rows[6]=0x04; return true;
+        case ' ': return true;
+        default: return false;
+    }
+}
+
+static void draw_text_5x7(SDL_Surface *surface, int x, int y, const char *text, Uint32 color, int scale) {
+    for (size_t idx = 0; text[idx] != '\0'; idx++) {
+        unsigned char rows[7];
+        char c = (char)toupper((unsigned char)text[idx]);
+        if (!glyph_for_char(c, rows)) {
+            c = ' ';
+            glyph_for_char(c, rows);
+        }
+
+        for (int row = 0; row < 7; row++) {
+            for (int col = 0; col < 5; col++) {
+                if ((rows[row] >> (4 - col)) & 1) {
+                    SDL_Rect pixel = {
+                        x + (int)idx * (6 * scale) + col * scale,
+                        y + row * scale,
+                        scale,
+                        scale
+                    };
+                    SDL_FillRect(surface, &pixel, color);
+                }
+            }
+        }
+    }
+}
+
+static void draw_file_menu(SDL_Surface *surface, bool menu_open) {
+    SDL_Rect button = {FILE_MENU_X, FILE_MENU_Y, FILE_MENU_BUTTON_W, FILE_MENU_BUTTON_H};
+    SDL_FillRect(surface, &button, 0x202020);
+
+    SDL_Rect btop = {button.x, button.y, button.w, 2};
+    SDL_Rect bbot = {button.x, button.y + button.h - 2, button.w, 2};
+    SDL_Rect bleft = {button.x, button.y, 2, button.h};
+    SDL_Rect bright = {button.x + button.w - 2, button.y, 2, button.h};
+    SDL_FillRect(surface, &btop, 0xE0E0E0);
+    SDL_FillRect(surface, &bbot, 0xE0E0E0);
+    SDL_FillRect(surface, &bleft, 0xE0E0E0);
+    SDL_FillRect(surface, &bright, 0xE0E0E0);
+    draw_text_5x7(surface, FILE_MENU_X + 8, FILE_MENU_Y + 5, "FILE", 0xFFFFFF, 2);
+
+    if (!menu_open) {
+        return;
+    }
+
+    const char *items[] = {"SAVE", "SAVE AS", "OPEN", "REOPEN"};
+    for (int i = 0; i < 4; i++) {
+        SDL_Rect item = {
+            FILE_MENU_X,
+            FILE_MENU_Y + FILE_MENU_BUTTON_H + i * FILE_MENU_ITEM_H,
+            FILE_MENU_DROPDOWN_W,
+            FILE_MENU_ITEM_H
+        };
+        SDL_FillRect(surface, &item, 0x2A2A2A);
+
+        SDL_Rect itop = {item.x, item.y, item.w, 1};
+        SDL_Rect ibot = {item.x, item.y + item.h - 1, item.w, 1};
+        SDL_Rect ileft = {item.x, item.y, 1, item.h};
+        SDL_Rect iright = {item.x + item.w - 1, item.y, 1, item.h};
+        SDL_FillRect(surface, &itop, 0x707070);
+        SDL_FillRect(surface, &ibot, 0x707070);
+        SDL_FillRect(surface, &ileft, 0x707070);
+        SDL_FillRect(surface, &iright, 0x707070);
+
+        draw_text_5x7(surface, item.x + 8, item.y + 4, items[i], 0xF0F0F0, 2);
+    }
+}
+
+static MenuAction file_menu_hit_test(int mouse_x, int mouse_y, bool menu_open, bool *clicked_button) {
+    SDL_Rect button = {FILE_MENU_X, FILE_MENU_Y, FILE_MENU_BUTTON_W, FILE_MENU_BUTTON_H};
+    *clicked_button = false;
+
+    if (point_in_rect(mouse_x, mouse_y, button)) {
+        *clicked_button = true;
+        return MENU_ACTION_NONE;
+    }
+
+    if (!menu_open) {
+        return MENU_ACTION_NONE;
+    }
+
+    for (int i = 0; i < 4; i++) {
+        SDL_Rect item = {
+            FILE_MENU_X,
+            FILE_MENU_Y + FILE_MENU_BUTTON_H + i * FILE_MENU_ITEM_H,
+            FILE_MENU_DROPDOWN_W,
+            FILE_MENU_ITEM_H
+        };
+        if (point_in_rect(mouse_x, mouse_y, item)) {
+            return (MenuAction)(i + 1);
+        }
+    }
+
+    return MENU_ACTION_NONE;
+}
 
 Uint32 color_palette[] = {
     // Top Row (Darker tones/Neutrals)
@@ -323,19 +455,34 @@ static bool save_canvas_atomic(SDL_Surface *canvas, const char *final_path) {
     return true;
 }
 
-static bool next_save_as_path(char *out_path, size_t out_path_len) {
-    for (int i = 1; i < 10000; i++) {
-        int written = snprintf(out_path, out_path_len, "%s/drawing_%04d.bmp", SAVE_DIR, i);
-        if (written < 0 || (size_t)written >= out_path_len) {
-            return false;
-        }
+static bool choose_file_path(bool save_mode, char *out_path, size_t out_path_len) {
+    const char *command = save_mode
+        ? "zenity --file-selection --save --confirm-overwrite --filename=save/ 2>/dev/null"
+        : "zenity --file-selection --filename=save/ 2>/dev/null";
 
-        if (access(out_path, F_OK) != 0) {
-            return true;
-        }
+    FILE *pipe = popen(command, "r");
+    if (!pipe) {
+        printf("File picker unavailable. Install zenity for Open/Save As dialogs.\n");
+        return false;
     }
 
-    return false;
+    if (!fgets(out_path, (int)out_path_len, pipe)) {
+        pclose(pipe);
+        return false;
+    }
+
+    int status = pclose(pipe);
+    if (status != 0) {
+        return false;
+    }
+
+    size_t len = strlen(out_path);
+    while (len > 0 && (out_path[len - 1] == '\n' || out_path[len - 1] == '\r')) {
+        out_path[len - 1] = '\0';
+        len--;
+    }
+
+    return len > 0;
 }
 
 int main(int argc, char *argv[]){
@@ -370,20 +517,24 @@ int main(int argc, char *argv[]){
     SDL_Surface *undo_stack[MAX_UNDO];
     int undo_top = 0;
     bool draw = false;
+    bool file_menu_open = false;
     bool is_dirty = false;
     int mx, my, last_x, last_y, drawSize = 10;
     Color current_color = BRIGHT_RED;
     char current_file_path[MAX_PATH_LEN];
+    char original_file_path[MAX_PATH_LEN];
 
     if (!ensure_directory_exists(SAVE_DIR)) {
         done = true;
     }
 
     snprintf(current_file_path, sizeof(current_file_path), "%s", DEFAULT_BMP_PATH);
+    snprintf(original_file_path, sizeof(original_file_path), "%s", DEFAULT_BMP_PATH);
 
     if (argc > 1) {
         if (load_image_into_canvas(canvas, argv[1])) {
             snprintf(current_file_path, sizeof(current_file_path), "%s", argv[1]);
+            snprintf(original_file_path, sizeof(original_file_path), "%s", argv[1]);
         }
     }
 
@@ -434,6 +585,62 @@ int main(int argc, char *argv[]){
 
             if(event.type == SDL_MOUSEBUTTONDOWN){
                 if(event.button.button == SDL_BUTTON_LEFT){
+                    bool clicked_file_button = false;
+                    MenuAction menu_action = file_menu_hit_test(
+                        event.button.x,
+                        event.button.y,
+                        file_menu_open,
+                        &clicked_file_button
+                    );
+
+                    if (clicked_file_button) {
+                        file_menu_open = !file_menu_open;
+                        continue;
+                    }
+
+                    if (menu_action != MENU_ACTION_NONE) {
+                        file_menu_open = false;
+                        if (menu_action == MENU_ACTION_SAVE) {
+                            if (save_canvas_atomic(canvas, current_file_path)) {
+                                is_dirty = false;
+                            }
+                        } else if (menu_action == MENU_ACTION_SAVE_AS) {
+                            char save_as_path[MAX_PATH_LEN];
+                            if (choose_file_path(true, save_as_path, sizeof(save_as_path))) {
+                                snprintf(current_file_path, sizeof(current_file_path), "%s", save_as_path);
+                                if (save_canvas_atomic(canvas, current_file_path)) {
+                                    is_dirty = false;
+                                }
+                            } else {
+                                printf("Save As cancelled\n");
+                            }
+                        } else if (menu_action == MENU_ACTION_OPEN) {
+                            char open_path[MAX_PATH_LEN];
+                            if (choose_file_path(false, open_path, sizeof(open_path))) {
+                                push_undo(undo_stack, &undo_top, (int)MAX_UNDO, canvas);
+                                if (!load_image_into_canvas(canvas, open_path)) {
+                                    pop_undo(undo_stack, &undo_top, canvas);
+                                } else {
+                                    snprintf(current_file_path, sizeof(current_file_path), "%s", open_path);
+                                    is_dirty = false;
+                                }
+                            }
+                        } else if (menu_action == MENU_ACTION_REOPEN) {
+                            push_undo(undo_stack, &undo_top, (int)MAX_UNDO, canvas);
+                            if (!load_image_into_canvas(canvas, original_file_path)) {
+                                pop_undo(undo_stack, &undo_top, canvas);
+                            } else {
+                                snprintf(current_file_path, sizeof(current_file_path), "%s", original_file_path);
+                                is_dirty = false;
+                            }
+                        }
+                        continue;
+                    }
+
+                    if (file_menu_open) {
+                        file_menu_open = false;
+                    }
+
                     int hit = palette_hit_test(
                         event.button.x,
                         event.button.y,
@@ -470,13 +677,13 @@ int main(int argc, char *argv[]){
             if(event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_s && (event.key.keysym.mod & KMOD_CTRL)){
                 if((event.key.keysym.mod & KMOD_SHIFT) != 0){
                     char save_as_path[MAX_PATH_LEN];
-                    if (next_save_as_path(save_as_path, sizeof(save_as_path))) {
+                    if (choose_file_path(true, save_as_path, sizeof(save_as_path))) {
                         snprintf(current_file_path, sizeof(current_file_path), "%s", save_as_path);
                         if (save_canvas_atomic(canvas, current_file_path)) {
                             is_dirty = false;
                         }
                     } else {
-                        printf("No available Save As path\n");
+                        printf("Save As cancelled\n");
                     }
                 } else if (save_canvas_atomic(canvas, current_file_path)) {
                     is_dirty = false;
@@ -484,21 +691,11 @@ int main(int argc, char *argv[]){
             }
 
             if(event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_o && (event.key.keysym.mod & KMOD_CTRL)){
-                const char *open_path = current_file_path;
-                char fallback_path[MAX_PATH_LEN];
-
-                if((event.key.keysym.mod & KMOD_SHIFT) != 0){
-                    int written = snprintf(fallback_path, sizeof(fallback_path), "%s", DEFAULT_BMP_PATH);
-                    if (written > 0 && (size_t)written < sizeof(fallback_path)) {
-                        open_path = fallback_path;
-                    }
-                }
-
                 push_undo(undo_stack, &undo_top, (int)MAX_UNDO, canvas);
-                if (!load_image_into_canvas(canvas, open_path)) {
+                if (!load_image_into_canvas(canvas, original_file_path)) {
                     pop_undo(undo_stack, &undo_top, canvas);
                 } else {
-                    snprintf(current_file_path, sizeof(current_file_path), "%s", open_path);
+                    snprintf(current_file_path, sizeof(current_file_path), "%s", original_file_path);
                     is_dirty = false;
                 }
             }
@@ -525,6 +722,8 @@ int main(int argc, char *argv[]){
             PALETTE_COLUMNS,
             current_color
         );
+
+        draw_file_menu(cursor_preview, file_menu_open);
 
         draw_circle(mx, my, drawSize, cursor_preview, current_color);
 
